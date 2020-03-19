@@ -1,3 +1,3 @@
-Website for Big Data, Visualization, and Society
+Personal Website
 
-This page was created so that I could follow along and learn some basic Python.
+This page was created to share some of my original research work (but mainly to play around with Git).
