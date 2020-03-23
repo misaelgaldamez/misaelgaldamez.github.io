@@ -1,0 +1,12 @@
+---
+title: "About"
+output: html_document
+---
+
+<img src="images/misael.png" style="width:30%; border:2px solid; margin-right: 20px" align="left">
+
+
+**Misael Galdamez** is currently a [Senior Policy Analyst](https://milkeninstitute.org/center-for-regional-economics/misael-galdamez) at the Milken Institute’s [Center for Regional Economics](https://milkeninstitute.org/centers/center-for-regional-economics). He focuses on regional economic issues—specifically, the role of innovation, [workforce](https://milkeninstitute.org/sites/default/files/reports-pdf/Future%20of%20Work%20Report%202020.pdf), and housing policy in supporting growth and opportunity. Misael recently completed a Master’s degree in City Planning at MIT’s Department of Urban Studies and Planning, where his work centered on inclusive and equitable economic development. His [thesis research](https://hdl.handle.net/1721.1/123954) developed an adapted methodology for living wage estimations in Mexico City under his advisor, [Dr. Amy Glasmeier](https://dusp.mit.edu/faculty/amy-glasmeier). Prior to graduate school, Misael was a division and projects coordinator at the International Monetary Fund, where he worked on a number of research projects related to [remittances and migration](http://dx.doi.org/10.5089/9781484303641.001) in and from Latin America. Misael is based in Los Angeles and has a fondness for local hole-in-the-wall restaurants and Brazilian Jiu-Jitsu.
+
+
+Misael's resume is available [here](files/galdamez_20.pdf).

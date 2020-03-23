@@ -1,0 +1,470 @@
+---
+title: "California's Regional Economic Divide"
+output: html_document
+---
+#### *March 23, 2020*
+#### *Tech-strong Coastal California leads the Golden State's economy, but population growth and migration present an opportunity for the interior.*
+
+```{r, include=FALSE}
+#Load Packages
+library(ggplot2) #Plotting package
+library(sf) #Gis Package
+library(readxl) #Read files
+library(readr) #Read files
+library(dplyr) #data manipulation
+library(tigris) #access census API for shapefiles
+options(tigris_class = "sf") #import census data as shapefiles
+library(tidycensus) #access census data
+library(extrafont) #fonts for charts
+library(lato) #ggplot theme for charts
+library(scales) #package for neat axes on charts
+library(Cairo) #package to export
+library(bea.R) #access BEA API
+library(leaflet) #interactive maps
+library(stringr) #string text manipulation
+library(purrr)
+library(magick) #to add logo to charts
+library(tidyr)
+library(naniar)
+library(plotly) #make interactive charts
+library(zoo) #Rolling Averages
+library(here)
+library(widgetframe)
+library(htmltools)
+library(rgdal)
+library(gpclib)
+beaKey 	<- '3A67C167-42B6-455E-B005-CC4F8F4EEDFD'
+Sys.setenv("plotly_username"="misagald92")
+Sys.setenv("plotly_api_key"="Abmg*1018!")
+Sys.setenv("plotly_api_key"="o07x6TkNxOb5SY5Ph7MT")
+```
+
+```{r, include=FALSE}
+##Get BEA Data - testing the API
+
+#BEA Regional API info: https://apps.bea.gov/regional/docs/RegionalApi.cfm
+#API Pdf How-to: https://apps.bea.gov/api/_pdf/bea_web_service_api_user_guide.pdf
+#linecodes: https://apps.bea.gov/api/data/?&UserID=3A67C167-42B6-455E-B005-CC4F8F4EEDFD&method=GetParameterValuesFiltered&datasetname=Regional&TargetParameter=LineCode&TableName=CAGDP9&ResultFormat=XML
+
+#Testing API - Getting California County GDP for 2018
+beaSpecs <- list(
+	'UserID' = beaKey ,
+	'Method' = 'GetData',
+	'datasetname' = 'Regional',
+	'TableName' = 'CAGDP9',
+	'LINECODE' = '1', #only one var allowed at a time
+	'Frequency' = 'A',
+	'Year' = '2001,2018', #allows multiple years
+	'ResultFormat' = 'json',
+	'GeoFips' = 'COUNTY'
+);
+beaPayload <- beaGet(beaSpecs);
+
+ca_gdp <- beaPayload %>% 
+          mutate(GeoFips = as.numeric(GeoFips)) %>% 
+          filter(GeoFips >= 6000 & GeoFips < 7000) %>% #filter for california
+          rename(gdp_01 = DataValue_2001, gdp_18 = DataValue_2018) %>% 
+          mutate(GeoFips = paste('0',GeoFips,sep="")) %>% 
+          mutate(gdp18_pct = gdp_18/sum(gdp_18)) %>% 
+          mutate(gdp01_pct = gdp_01/sum(gdp_01))
+          
+```
+
+
+```{r, include=FALSE}
+##Read in Coastal Data
+coastal <- read_excel("C:/Users/mgaldamez/OneDrive - Milken Institute/projects/county gdp (dec. 19)/data/coastline_counties.xlsx", 
+                      sheet = "CoastlineCounty16") %>% 
+           filter(`STATE NAME` == "California")
+```
+
+
+```{r, include=FALSE}
+##Read BEA Growth data in from downloads
+
+growth <- read_excel("C:/Users/mgaldamez/OneDrive - Milken Institute/projects/county gdp (dec. 19)/data/comp_growth.xlsx") %>%  #Compound Annual Industry Growth Rate from 2001-2018 
+          replace_with_na(replace = list(gdp_growth = "(D)")) %>% #Convert undisclosed values to NAs
+          mutate(gdp_growth = as.numeric(gdp_growth)) %>%  #Convert GDP Growth to numeric
+          mutate(ind = case_when( #Create nicer Industry name labels
+            LineCode == "1" ~ "Total",
+            LineCode == "3" ~ "Agriculture",
+            LineCode == "6" ~ "Mining",
+            LineCode == "10" ~ "Utilities",
+            LineCode == "11" ~ "Construction",
+            LineCode == "12" ~ "Manufacturing",
+            LineCode == "34" ~ "Wholesale Trade",
+            LineCode == "35" ~ "Retail Trade",
+            LineCode == "36" ~ "Transp./Warehousing",
+            LineCode == "45" ~ "Information",
+            LineCode == "51" ~ "Finance/Insurance",
+            LineCode == "56" ~ "Real Estate",
+            LineCode == "60" ~ "Prof. Services",
+            LineCode == "64" ~ "Management",
+            LineCode == "65" ~ "Admin./Waste Mgmt.",
+            LineCode == "69" ~ "Educational Services",
+            LineCode == "70" ~ "Health Care",
+            LineCode == "76" ~ "Arts and Ent.",
+            LineCode == "79" ~ "Accomodation/Food Services",
+            LineCode == "82" ~ "Other Services",
+            TRUE ~ "Government"))
+
+ca_growth <- growth %>% 
+  filter(GeoName == "California") #subset statewide data
+
+county_growth <- growth %>% 
+  filter(GeoName != "California") %>% #subset county-level data
+  mutate(coastal = #create coastal variable if in the coastal data
+           case_when(GeoFips %in% coastal$`STATE/COUNTY FIPS` ~ 1,
+                     TRUE ~ 0))
+```
+
+```{r, include=FALSE}
+##Read BEA GDP data (levels) from downloads
+
+gdp_lev <- read_csv("C:/Users/mgaldamez/OneDrive - Milken Institute/projects/county gdp (dec. 19)/data/gdp_01_18.csv") #read in dataset
+
+years <- as.numeric(colnames(gdp_lev)) %>% #Extract Years from GDP Column names into a vector
+         na.omit() %>% #Remove NAs from column names
+         as.character()
+
+gdp_lev <- gdp_lev %>%  #Clean dataset
+           filter(LineCode %in% growth$LineCode) %>% #Filter for NAICS code industries
+           na_if(.,"(D)") %>% #Replace undisclosed with NA
+           na_if(., "(NA)") %>%  #replace (NA) with NA
+           mutate(ind = case_when( #Create nicer Industry name labels
+            LineCode == "1" ~ "Total",
+            LineCode == "3" ~ "Agriculture",
+            LineCode == "6" ~ "Mining",
+            LineCode == "10" ~ "Utilities",
+            LineCode == "11" ~ "Construction",
+            LineCode == "12" ~ "Manufacturing",
+            LineCode == "34" ~ "Wholesalers",
+            LineCode == "35" ~ "Retail",
+            LineCode == "36" ~ "Warehousing/Trans.",
+            LineCode == "45" ~ "Information",
+            LineCode == "51" ~ "Finance",
+            LineCode == "56" ~ "Real Estate",
+            LineCode == "60" ~ "Prof. Services",
+            LineCode == "64" ~ "Management",
+            LineCode == "65" ~ "Waste Mgmt.",
+            LineCode == "69" ~ "Education",
+            LineCode == "70" ~ "Health Care",
+            LineCode == "76" ~ "Arts and Ent.",
+            LineCode == "79" ~ "Accomodation",
+            LineCode == "82" ~ "Other Services",
+            TRUE ~ "Govt.")) %>% 
+          pivot_longer(cols = one_of(years), #Turn to Long format for charts using years vector
+                       names_to = "year",
+                       names_prefix = "year",
+                       values_to = "gdp",
+                       values_drop_na = FALSE) %>% 
+          mutate(year = as.numeric(year)) %>% #Make Year Numeric
+          mutate(gdp = as.numeric(gdp)) #Make gdp numeric
+
+county_lev <- gdp_lev %>% 
+  filter(GeoName != "California") %>% #subset county values
+  mutate(coastal = #create coastal variable if in the coastal data
+           case_when(GeoFIPS %in% coastal$`STATE/COUNTY FIPS` ~ 1,
+                     TRUE ~ 0))
+```
+
+```{r, include=FALSE}
+##Read in Population Data
+pop_lev <- read_excel("C:/Users/mgaldamez/OneDrive - Milken Institute/projects/county gdp (dec. 19)/data/pop_counties.xls", 
+                   sheet = "Table 1 County State") %>% #Read in Population data from State Dept. of Finance
+        pivot_longer(cols = (3:22), #Convert to Long format to match with GDP data
+                     names_to = "year",
+                     values_to = "pop",
+                     values_drop_na = FALSE) %>% 
+        mutate(year = as.numeric(year))
+
+##GDP Per Capita
+gdp_pc <- county_lev %>% 
+          filter(LineCode == 1) %>% #filter to get total industry only
+          inner_join(pop_lev, by = c("GeoFIPS", "year")) %>%  #merge with population data
+          mutate(gdp_pc = (gdp/pop)*1000)
+```
+
+```{r, include=FALSE}
+##Get Shapefiles Using Census API
+CA <- states(cb = TRUE) %>%  #Get state shapefile from census
+      filter(STUSPS == "CA") #Keep only CA 
+
+counties <- counties(state = "CA", cb = TRUE) %>% #Get County-level shapefile from Census
+            select(GEOID, NAME, geometry) #keep only needed columns
+```
+
+Over the last two decades, the majority of high-value economic activity in California has remained concentrated on the coast, even as the cost of living soars and people move inland, according to new gross domestic product (GDP) data released by the [Bureau of Economic Analysis (BEA)](https://www.bea.gov/news/2019/local-area-gross-domestic-product-2018).
+
+An analysis of the dataset reveals that coastal counties contributed 80 percent of the Golden State's output in 2018, despite comprising only 67.9 percent of the population in 2018. Los Angeles County alone produced more than a quarter of statewide gross domestic product in 2018, more than double the next largest county and heart of the Silicon Valley, Santa Clara County. <br>
+<br>
+```{r echo=FALSE, message=FALSE, warning=FALSE, fig.align = 'center'}
+#State GDP Share Chart
+
+#Create Spatialdataframes for Plotly
+ca_sp <- as(CA, "Spatial")
+
+share_map_sp <- as(counties, "Spatial") %>% 
+  fortify(region = "GEOID") %>% 
+  merge(ca_gdp, by.x = "id", by.y = "GeoFips") %>% 
+  mutate(name = gsub("^(.*?),.*", "\\1", GeoName)) %>% #clean name variable
+  select(c(long, lat, group, name, gdp18_pct))
+
+#Create GGPlot for Plotly
+gg_share <- 
+  ggplot(data= share_map_sp, aes(x = long, y = lat, group = group)) +
+  geom_polygon(data=ca_sp, fill = "transparent", color = "#999999", size = .5) +
+  geom_polygon(aes(fill = gdp18_pct, text=paste0("<b>", name, " County </b>", 
+               "<br />", "Share of State GDP, 2018: ", round(gdp18_pct*100,1), "%")), color = "transparent", size = .1) +
+  coord_fixed(ratio=1.3) +
+  theme_lato(caption.face = "plain", caption.color = "grey30", legend.box = FALSE) +
+  theme(axis.text.x = element_blank(),
+        axis.text.y = element_blank(),
+        axis.ticks = element_blank(),
+        axis.title.x = element_blank(), 
+        axis.title.y = element_blank(),
+        rect = element_blank(),
+        panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank()) +
+   labs(title = "Coastal Counties Account For 80 Percent of State GDP",
+        subtitle = "County-Level Gross Domestic Product as a Share of State GDP, 2018",
+        xlab = "",
+        ylab = "",
+        fill = NULL) + 
+   scale_fill_distiller(palette = "GnBu", direction = 1, labels = percent_format(accuracy = .1), 
+   guide = guide_colorbar(
+      direction = "horizontal",
+      barheight = unit(2, units = "mm"),
+      barwidth = unit(50, units = "mm"),
+      draw.ulim = F,
+      title.position = 'top',
+      title.hjust = .5,
+      label.hjust = .5
+   ))
+
+#Create plotly
+gdp_share <- ggplotly(gg_share,
+                   tooltip = "text") %>% 
+  layout(title=list(text=paste0('<b>Coastal Counties Account For 80 Percent of State GDP</b>',
+                                    '<br>',
+                                    '<sup>',
+                                    '<i>County-Level Gross Domestic Product as a Share of State GDP, 2018</i>',
+                                    '</sup>')),
+         xaxis=list(
+           title = paste0('<br>',
+                          '<sup>',
+                          '<b>Source: Bureau of Economic Analysis (2019).</b>',
+                          '</sup>'),
+           margin = list(l = 50, r = 50, t = 60, b = 60)))
+
+gdp_share
+```
+<br>
+These *aggregate* differences in the proportions of economic activity between Inland and Coastal California have been persistent across time and remain relatively unchanged since 2001, despite the economy growing to almost 3 trillion dollars. On a *per capita* level, however, Coastal California has far outperformed Inland California. In 2018, Coastal California produced \$80,600 per person relative to Inland California's \$43,100, more than double the difference in 2001.<br>
+<br>
+<br>
+```{r echo=FALSE, message=FALSE, warning=FALSE, fig.align = 'center'}
+##Coastal vs. Inland GDP PC over Time
+pc_time <- gdp_pc %>% 
+  group_by(coastal, year) %>% #group to get coastal/inland values
+  summarize(gdp = sum(gdp),
+            pop = sum(pop),
+            gdp_pc = gdp/pop) %>% 
+  mutate(coastal2 = case_when( #Clean Coastal/Inland variable for graphics
+    coastal == 0 ~ "Inland",
+    TRUE ~ "Coastal"
+  )) %>% 
+  ggplot(aes(x=year, y=round(gdp_pc*1000,-2), color = coastal2), size = 1) +
+  geom_line() +
+  theme_lato(caption.color = "grey30", legend.box = FALSE) + 
+  scale_fill_manual(values = c("#0066cc", "#33cccc"), name = "County Type") +
+  labs(title = "The Coastal-Inland Gap Has Doubled",
+       subtitle = "GDP per Capita in 2012 Chained Dollars, 2001-18",
+       caption = "Source: Bureau of Economic Analysis (2019) and State Department of Finance (2019).",
+       y = "",
+       color = "Region") +
+  theme(axis.title.x = element_blank()) + 
+  scale_y_continuous(labels = scales::dollar_format(accuracy=1)) +
+  scale_color_manual(values = c("#0066cc", "#33cccc"))
+
+pc_inter <- 
+  ggplotly(pc_time) %>% 
+  layout(title = list(text = paste0('<b>The Coastal-Inland Gap Has Doubled</b>',
+                                    '<br>',
+                                    '<sup>',
+                                    '<i>GDP per Capita, Chained 2012 Dollars, 2001-18</i>',
+                                    '</sup>')),
+         xaxis=list(
+           title = paste0('<br>',
+                          '<sup>',
+                          '<b>Source: Bureau of Economic Analysis (2019) and State Department of Finance (2019).</b>',
+                          '</sup>'),
+           margin = list(b = 50))) %>% 
+  layout(yaxis = list(hoverformat = ".0f")) %>% 
+    style(hoverinfo = "y", traces = 1:2, hovertemplate = paste0('%{x:.0f}: ','%{y:$,.0f}'))
+
+p1 <- plotly_build(pc_inter)
+
+p1$x$data[[1]]$name <- "Coastal"
+p1$x$data[[2]]$name <- "Inland"
+
+p1
+```
+<br>
+<br>
+This magnitude of difference in output is explained by the regions' disparate industrial mixes. Coastal California's economy features industries requiring specialized skills, including professional services, manufacturing, and information, which more than doubled in size since 2001. Conversely, Inland California's economy remains focused on people-centered services like real estate, government, healthcare, and retail, in addition to manufacturing.<br>
+<br>
+```{r echo=FALSE, message=FALSE, warning=FALSE, fig.align = 'center', fig.width = 8, fig.height = 4}
+##Industry Chart
+
+##ggplot Charts
+reg_ind1 <- county_lev %>% 
+  filter(LineCode != 1) %>% #Filter to get total industries
+  group_by(year, coastal, ind) %>% #group to get coastal/inland values
+  summarize(gdp = sum(gdp, na.rm=TRUE),
+            LineCode = median(LineCode)) %>% 
+  ungroup() %>% 
+  group_by(year, coastal) %>% 
+  mutate(pct = gdp/sum(gdp)) %>% 
+  mutate(coastal2 = case_when( #Clean Coastal/Inland variable for graphics
+    coastal == 0 ~ "Inland",
+    TRUE ~ "Coastal"
+  )) %>%
+  filter(LineCode <=52) %>% 
+  ggplot(aes(x=year, y=pct, color=coastal2)) +
+  geom_line(stat="identity") +
+  geom_line(aes(text=paste0("<b>", coastal2, " CA </b>", 
+                            "<br>",
+                            "Ind. Share of GDP, ", year, ": ", round(pct*100,1), "%")), size=0) +
+  facet_wrap(~ind, ncol=5) +
+  theme_lato(caption.face = "plain", caption.color = "grey30", legend.box = FALSE) + 
+  labs(title = "Coastal and Inland California's Disparate Industrial Bases",
+       subtitle = "Industry Output as a Share of Regional GDP, 2001-18",
+       caption = "Source: Bureau of Economic Analysis (2019).",
+       y = "",
+       color = "Region") +
+  theme(axis.title.x = element_blank(), legend.position = "bottom") + 
+  scale_y_continuous(labels = scales::percent_format(accuracy = 1)) + 
+  scale_x_continuous(breaks=seq(2005, 2015, 10)) +
+  scale_color_manual(values = c("#0066cc", "#33cccc"), name = "Region")
+
+reg_ind2 <- county_lev %>% 
+  filter(LineCode != 1) %>% #Filter to get total industries
+  group_by(year, coastal, ind) %>% #group to get coastal/inland values
+  summarize(gdp = sum(gdp, na.rm=TRUE),
+            LineCode = median(LineCode)) %>% 
+  ungroup() %>% 
+  group_by(year, coastal) %>% 
+  mutate(pct = gdp/sum(gdp)) %>% 
+  mutate(coastal2 = case_when( #Clean Coastal/Inland variable for graphics
+    coastal == 0 ~ "Inland",
+    TRUE ~ "Coastal"
+  )) %>%
+  filter(LineCode > 52) %>% 
+  ggplot(aes(x=year, y=pct, color=coastal2)) +
+  geom_line(stat="identity") +
+  geom_line(aes(text=paste0("<b>", coastal2, " CA </b>", 
+                            "<br>",
+                            "Ind. Share of GDP, ", year, ": ", round(pct*100,1), "%")), size=0) +
+  facet_wrap(~ind, ncol=5) +
+  theme_lato(caption.face = "plain", caption.color = "grey30", legend.box = FALSE) + 
+  labs(color = "Region") +
+  theme(axis.title.x = element_blank(), axis.title.y = element_blank(), legend.position = "bottom") + 
+  scale_y_continuous(labels = scales::percent_format(accuracy = 1)) + 
+  scale_x_continuous(breaks=seq(2005, 2015, 10)) +
+  scale_color_manual(values = c("#0066cc", "#33cccc"), name = "Region")
+
+##ggplotly
+indshares1 <- ggplotly(reg_ind1, tooltip="text") %>% 
+  layout(margin=list(t=100),
+    title = list(text = paste0('<b>Disparate Industries in Coastal and Inland California</b>',
+                                    '<br>',
+                                    '<sup>',
+                                    '<i>Industry Output as a Share of Regional GDP, 2001-18</i>',
+                                    '</sup>',
+                                    "<br>")))
+
+indshares2 <- ggplotly(reg_ind2, tooltip="text") %>% 
+  layout(margin = list(l = 50, r = 50, t = 60, b = 60),
+         xaxis=list(title = paste0('<br>',
+                          '<sup>',
+                          '<b>Source: BEA (2019).</b>',
+                          '</sup>')))
+
+indshares1
+indshares2
+```
+<br>These bifurcated industrial patterns are a Californian microcosm of what Richard Florida calls the ["winner-take-all phenomenon"](https://www.theatlantic.com/business/archive/2017/04/richard-florida-winner-take-all-new-urban-crisis/522630/): a handful of superstar cities generate the greatest levels of innovation and output, and therefore attract the most talented people. These advantages endure and compound, further increasing their dominance over other locations, while working- and middle-class citizens struggle to stay in place.
+
+This has been especially true in Coastal California over the last twenty years; both San Francisco Bay Area and Los Angeles topped the list of [major U.S. cities people are leaving](https://calmatters.org/california-divide/2020/01/not-the-golden-state-anymore-middle-and-low-income-people-leaving-california/). And a majority of Golden State out-movers reported an annual income of less than $100,000, citing cost of living concerns as the reason for their move. These trends have only been exacerbated by the rise of the information industry, whose high-value gains have been experienced by only a [handful of cities and elites](https://www.brookings.edu/research/tech-is-still-concentrating/).
+
+But this out-migration from major coastal areas translates to an inland population boom, according to [data analyzed](https://s3.amazonaws.com/research.buildzoom/Projects/2017/NetMigration/ForDownload_27Mar2018.xlsx) by the [Terner Center for Housing Innovation](https://ternercenter.berkeley.edu/blog/disparity-departure-los-angeles). For example, from 2010–2016, the Riverside-San Bernardino-Ontario region welcomed more than 200,000 net movers from the Los Angeles-Long Beach-Anaheim area. And in the Sacramento-Roseville area, almost 50,000 net movers hailed from the San Jose-San Francisco-Oakland region.
+
+As a result, Inland California counties have experienced strong economic growth—with the exception of the Bay Area tech hubs, inland counties were among the fastest-growing in the time period. Aggregate economic growth, however, does not necessarily translate into tangible improvements in quality of life for inland residents. [Wages](https://www.pe.com/2019/09/03/inland-empire-wages-lowest-among-big-u-s-counties-l-a-o-c-middle-of-the-pack/) in the southern inland counties (known regionally as the "Inland Empire"), for instance, are roughly one-third less than in coastal counties, while [wage growth](https://news.ucr.edu/articles/2019/12/19/inland-empire-helps-drive-californias-economic-expansion) in the Inland Empire continues to lag behind the state average.<br>
+<br>
+```{r echo=FALSE, message=FALSE, warning=FALSE, fig.align = 'center'}
+##Compound Annual GDP Growth
+
+#Create Spatialdataframes for Plotly
+cagr <- as(counties, "Spatial") %>% 
+  fortify(region = "GEOID") %>% 
+  left_join(county_growth, by=c('id'='GeoFips')) %>% 
+  filter(LineCode == 1) %>% #only all industry totals
+  mutate(name = gsub("^(.*?),.*", "\\1", GeoName)) %>% #clean name variable
+  select(c(long, lat, group, name, gdp_growth))
+
+#Create GGPlot for Plotly
+county_growthsp <- 
+  ggplot(data= cagr, aes(x = long, y = lat, group = group)) +
+  geom_polygon(data=ca_sp, fill = "transparent", color = "#999999", size = .5) +
+  geom_polygon(aes(fill = gdp_growth/100, text=paste0("<b>", name, " County </b>", 
+               "<br />", "GDP Growth, 2001-18: ", gdp_growth, "%")), color = "transparent", size = .1) +
+  coord_fixed(ratio=1.3) +
+  theme_lato(caption.face = "plain", caption.color = "grey30", legend.box = FALSE) +
+  theme(axis.text.x = element_blank(),
+        axis.text.y = element_blank(),
+        axis.ticks = element_blank(),
+        axis.title.x = element_blank(), 
+        axis.title.y = element_blank(),
+        rect = element_blank(),
+        panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank()) +
+   labs(title = "GDP Growth Strongest Inland and in the Bay Area",
+        subtitle = "County-Level Compound Annual GDP Growth, 2001-18",
+        caption = "Source: Bureau of Economic Analysis (2019).",
+        xlab = "",
+        ylab = "",
+        fill = NULL) + 
+   scale_fill_distiller(palette = "GnBu", direction = 1, labels = percent_format(accuracy = 1), 
+   guide = guide_colorbar(
+      direction = "horizontal",
+      barheight = unit(2, units = "mm"),
+      barwidth = unit(50, units = "mm"),
+      draw.ulim = F,
+      title.position = 'top',
+      title.hjust = .5,
+      label.hjust = .5
+   ))
+
+#Create plotly
+
+growth <- ggplotly(county_growthsp,
+                   tooltip = "text") %>% 
+  layout(title=list(text=paste0('<b>GDP Growth Strongest Inland and in the Bay Area</b>',
+                                    '<br>',
+                                    '<sup>',
+                                    '<i>County-Level Compound Annual GDP Growth, 2001-18 </i>',
+                                    '</sup>')),
+         xaxis=list(
+           title = paste0('<br>',
+                          '<sup>',
+                          '<b>Source: Bureau of Economic Analysis (2019).</b>',
+                          '</sup>'),
+           margin = list(l = 50, r = 50, t = 60, b = 60)))
+
+growth
+```
+<br>
+The challenge facing California in the next two decades, then, is two-fold. First, Coastal California's legacy of innovation threatens to become a beacon of exclusivity: affluence and achievement only for those who can afford it. Prolonging economic growth means a focus on empowering people to stay by building more housing stock and, especially, more affordable housing. But this also requires investing in high-quality transit options and connectivity to increase job access.
+
+Second, inland population gains must be turned into productivity gains. [Inland California Rising](https://news.ucr.edu/articles/2019/06/24/want-see-california-rise-look-inland), for instance, wants to build on the region's economic assets like universities and a history of public sector innovation to spur investment. If the interior is to develop into a dynamic engine of growth, strategic public investment will be needed to integrate Inland California with the coastal value chain and facilitate the development of its own assets and industries.

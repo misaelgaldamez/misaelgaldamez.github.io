@@ -1,0 +1,19 @@
+name: "Misael Galdamez"
+output_dir: "docs"
+navbar:
+  title: "Misael Galdamez"
+  left:
+    - text: "Home"
+      href: index.html
+    - text: "California's Regional Divide"
+      href: ca-regional-divide.html
+  right:
+    - icon: fa-github fa-lg
+      href: https:/github.com/misaelgaldamez
+    - icon: fa-twitter fa-lg
+      href: https://twitter.com/misaeligaldamez
+    - icon: fa-linkedin fa-lg
+      href: https://www.linkedin.com/in/misael-galdamez-94903566/
+output:
+  html_document:
+    theme: journal
