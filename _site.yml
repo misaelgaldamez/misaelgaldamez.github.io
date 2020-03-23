@@ -1,5 +1,5 @@
 name: "Misael Galdamez"
-output_dir: "docs"
+output_dir: "."
 navbar:
   title: "Misael Galdamez"
   left:
